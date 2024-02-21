@@ -1,0 +1,93 @@
+
+Using Percona Toolkit pt-mongodb-query-digest
+March 1, 2017
+
+https://www.percona.com/blog/using-percona-toolkit-pt-mongodb-query-digest/
+
+
+Carlos Salguero
+
+pt-mongodb-query-digestThis blog post is another in the series on the Percona Server for MongoDB 3.4 bundle release. In this blog post, we’ll look at how to use the pt-mongodb-query-digest tool in Percona Toolkit 3.0.
+
+Percona’s pt-query-digest is one of our most popular Percona Toolkit MySQL tools. It is used on a daily basis by DBAs and developers to help identify the queries consuming the most resources. It helps in finding bottlenecks and optimizing database usage. The pt-mongodb-query-digest is a similar tool for MongoDB.
+
+About the Profiler
+Before we start, remember that the MongoDB database profiler is disabled by default, and should be enabled. It can be enabled server-wide, but the full mode that logs all queries is not recommended in production unless you are using Percona Server for MongoDB 3.2 or higher. We added a feature to allow the sample rate of non-slow queries (like in MySQL) to limit the overhead this causes. 
+
+Additionally, by default, the profiler is only 1MB per database. You may want to remove/create the profiler to sufficient size to find the results useful. To do this, use:
+
+org_prof_level = db.getProfilingLevel();
+//Disable Profiler
+db.setProfilingLevel(0);
+db.system.profile.drop();
+//Setup  a  100M profile  1*Math.pow(1024,2) == 1M
+profiler_size = 100 * Math.pow(1024,2);
+db.runCommand( { create: "system.profile", capped: true, size: profiler_size } );
+db.setProfilingLevel(org_prof_level);
+According to the documentation, to check if the profiler is enabled for the samples database, run:
+
+`echo "db.getProfilingStatus();" | mongo localhost:17001/samples`
+Remember, you need to connect to a MongoDB instance, not a mongos. The output will be something like this:
+
+MongoDB shell version: 3.2.12
+connecting to: localhost:17001/samples
+{ "was" : 0, "slowms" : 100 }
+bye
+The value for the field “was” is 0, which means profiling is disabled. Let’s enable the profiler for the samples database.
+
+You must enable the profiler on all MongoDB instances that could be related to a shard of our database. To check on which instances we should enable the profiler, I am going to use the pt-mongodb-summary tool. It shows us the information we need about our cluster:
+
+./pt-mongodb-summary
+ 
+./pt-mongodb-summary 
+ 
+# Instances ##############################################################################################
+  PID    Host                         Type                      ReplSet                   Engine 
+ 11037 localhost:17001                SHARDSVR/PRIMARY          r1                    wiredTiger 
+ 11065 localhost:17002                SHARDSVR/SECONDARY        r1                    wiredTiger 
+ 11136 localhost:17003                SHARDSVR/SECONDARY        r1                    wiredTiger 
+ 11256 localhost:17004                SHARDSVR/ARBITER          r1                    wiredTiger 
+ 11291 localhost:18001                SHARDSVR/PRIMARY          r2                    wiredTiger 
+ 11362 localhost:18002                SHARDSVR/SECONDARY        r2                    wiredTiger 
+ 11435 localhost:18003                SHARDSVR/SECONDARY        r2                    wiredTiger 
+ 11513 localhost:18004                SHARDSVR/ARBITER          r2                    wiredTiger 
+ 11548 localhost:19001                CONFIGSVR                 -                     wiredTiger 
+ 11571 localhost:19002                CONFIGSVR                 -                     wiredTiger 
+ 11592 localhost:19003                CONFIGSVR                 -                     wiredTiger
+We have mongod service running on the localhost on ports 17001~17003 and 18001~18003.
+
+Now, let’s enable the profiler for the samples database on those instances. For this example, I am going to set the profile level to “2”, to collect information about all queries.
+
+for port in 17001 17002 17003 18001 18002 18003; do echo "db.setProfilingLevel(2);" | mongo localhost:${port}/samples; done
+Running pt-mongodb-query-profile
+Now we are ready to get statistics about our queries. To run pt-mongodb-query-digest, we need to specify at least “host: port/database”, like:
+
+./pt-mongodb-query-digest localhost:27017/samples
+The output will be something like this (I am showing a section for only one query):
+
+# Query 0:  0.27 QPS, ID 2c0e2f94937d6660f510adeea98618f3
+# Ratio    1.00  (docs scanned/returned)
+# Time range: 2017-02-22 12:27:21.004 -0300 ART to 2017-02-22 12:28:00.867 -0300 ART
+# Attribute            pct     total        min         max        avg         95%        stddev      median
+# ==================   ===   ========    ========    ========    ========    ========     =======    ========
+# Count (docs)                   845
+# Exec Time ms          99      1206           0         697           1           0          29           0
+# Docs Scanned           7    594.00        0.00       75.00        0.70        0.00        7.19        0.00
+# Docs Returned          7    594.00        0.00       75.00        0.70        0.00        7.19        0.00
+# Bytes recv             0      8.60M     215.00        1.06M      10.17K     215.00      101.86K     215.00
+# String:
+# Namespaces          samples.col1
+# Operation           query
+# Fingerprint         user_id
+# Query               {"user_id":{"$gte":3506196834,"$lt":3206379780}}
+From the output, we can see that this query was seen 97 times, and it provides statistics for the number of documents scanned/retrieved by the server, the execution time and size of the results. The tool also provides information regarding the operation type, the fingerprint and a query example to help to identify the source. 
+
+By default, the results are sorted by query count. It can be changed by setting the --order-by parameter to: count, ratio, query-time, docs-scanned or docs-returned.
+
+A “-” in front of the field name denotes the reverse order. Example:
+
+--order-by=-ratio
+When considering what ordering to use, you need to know if you are looking for the most common queries (-count), the most cache abusive (-docs-scanned), or the worst ratio of scanned to returned (-ratio)? Please note you may be tempted to use (-query-time), however you will find this almost always ends up being more queries affected by, but not causing, issues.
+
+Conclusion
+This is a new tool in the Percona Toolkit. We hope in the future we can make it grow like its big brother for MySQL ( pt-query-digest). This tool helps DBAs and developers identify and solve bottlenecks, and keep servers running at top performance.
