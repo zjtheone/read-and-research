@@ -131,3 +131,6 @@ db.<collection>.explain().<method>
     "ok": 1
 }
 Edit on GitHub (opens new window)
+
+百万级高并发mongodb集群性能数十倍提升优化实践
+https://juejin.cn/post/6844904030787878919
