@@ -1,0 +1,60 @@
+MongoDB WiredTiger运行时参数优化
+转载自：https://www.cnblogs.com/lijianming180/p/12256221.html
+
+MongoDB的WiredTiger存储引擎，用了一段时间，遇到了一些问题，通过优化WT参数，也解决了一些问题，做个小结。
+
+cache_size
+
+指定WT存储引擎内部cache的内存用量上限。
+
+需要注意的是，仅作用于WiredTiger cache，而非mongod进程的内存用量上限。MongoDB同时使用WT cache和文件系统cache，往往mongod进程的内存用量高于该值。cache_size相对于物理内存总量不要设置的太满，需要留有一定内存为操作系统所用，否则有OOM潜在风险。
+
+默认情况下，cache_used超过80%将触发eviction，如果物理内存充足，建议设置足够大的cache_size，以加载全部数据，避免不必要的eviction。
+
+个人经验值 cache_size = (data + index) / 0.8
+
+cache_size支持在不停服的情况下动态调整，比如将cache_size设置为80GB，执行如下命令：
+
+  db.adminCommand({setParameter: 1, wiredTigerEngineRuntimeConfig: "cache_size=80G"})
+eviction
+
+cache_used是很关键的指标，超过80%将触发eviction，类似LRU算法，淘汰冷数据，避免cache用量持续增长。
+
+一个健康的MongoDB服务，其cache_used应该不超过80%，即使超过，能在短时间内降到80%也是没问题的。如果长时间高于80%则需要重视起来，因为cache_used过高会导致数据库性能下降，体现在慢操作（读写请求耗时长）、qr/qw高（读写请求排队）等方面。所以我们要极力保证cache_used在一个健康的范围内。
+
+eviction包括很多参数，比如eviction_trigger、eviction_target、eviction_dirty_target等，指定在什么条件下触发和停止cache eviction，这里，我更关心的是eviction线程数量。
+
+对于eviction线程，MongoDB默认配置是eviction=(threads_min=1,threads_max=4)，根据cache使用情况，创建1-4个eviction线程去淘汰冷数据。
+
+如果cache体积较 大专栏  WiredTiger运行时参数优化大、读写频繁，那么需要更多的eviction线程。
+
+如果调高threads_max仍然无法降低cache_used，建议设置更大的cache_size
+
+动态调整配置：
+
+  db.adminCommand({setParameter: 1, wiredTigerEngineRuntimeConfig: "eviction=(threads_min=1,threads_max=8)"})
+wiredTigerConcurrentWriteTransactions
+
+指定最大并发写事务数。
+
+对于写频繁的服务，通过mongostat查看运行状态，如果qw持续较高、aw经常是128（默认值），说明写请求发生排队，同时WT无法提供更高的并发写。
+
+此时观察CPU负载，如果负载不高（相对于核数，CPU未充分利用），尝试调高此参数，能够一定程度上缓解问题，即使出现qw高，往往也是短暂的，可能下一秒恢复正常。
+
+调高此参数，相当于压榨CPU，CPU负载较之前会有一定增加，如果负载在合理范围内，可以接受；负载过高的话，建议扩容。
+
+建议根据实际情况动态调整，并持续观察效果，找到一个合理的值。
+
+查看当前配置：
+
+  db.adminCommand({getParameter: 1, wiredTigerConcurrentWriteTransactions: 1})
+  or
+  db.adminCommand({getParameter: '*'}).wiredTigerConcurrentWriteTransactions
+动态调整配置：
+
+  db.adminCommand({setParameter: 1, wiredTigerConcurrentWriteTransactions: 512})
+参考
+
+https://docs.mongodb.com/manual/reference/configuration-options/
+http://source.wiredtiger.com/2.8.0/tune_cache.html
+http://www.developer.com/db/tips-for-mongodb-wiredtiger-performance-tuning.html
