@@ -1,0 +1,104 @@
+编译MongoDB 4.0.3 CenOS7镜像
+
+下载基础镜像
+
+docker pull dockerproxy.cn/centos:centos7.1.1503
+docker run --name zjcentos --privileged --net host -itd dockerproxy.cn/centos:centos7.1.1503 bash
+
+下载公有云的mongodb代码
+git clone 	git@coding.jd.com:jcnosql/mongodb.git
+把文件夹jcnosql/mongodb/mongo-r4.0.3拷贝到容器中；
+docker cp mongo-r4.0.3 zjcentos:/home/
+
+
+准备编译环境
+mv /etc/yum.repos.d/CentOS-Base.repo  /etc/yum.repos.d/CentOS-Base.repo.bk
+curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo
+yum clean all; yum makecache
+
+安装依赖包
+参考 mongo-r4.0.3/docs/building.md
+https://git.jd.com/jcnosql/mongodb/blob/master/mongo-r4.0.3/docs/building.md
+
+yum -y install cmake cyrus-sasl-devel libpcap-devel openssl-devel openldapdevel snappy-devel xz-devel zlib-devel scons libcurl-devel 
+yum -y install bzip2-devel libpcap-devel snappy-devel gcc gcc-c++ rpmbuild rpmlint 
+yum -y install cmake cyrus-sasl-devel make openssl-devel zlib-devel libcurl-devel git 
+yum -y install python2-scons python2-pip python36-devel 
+yum -y install redhat-rpm-config python2-devel e2fsprogs-devel expatdevel lz4-devel 
+yum -y install openldap-devel 
+yum -y install python2-typing.noarch
+yum -y install python2-pyyaml.noarch
+yum -y install python2-regex.x86_64
+yum -y install python2-cheetah.x86_64
+yum -y install  python2-scons
+ yum -y install python2-cryptography.x86_64
+yum -y install python2-sync2jira.noarch
+yum -y install python-jwt.noarch
+yum -y install python-pymongo.x86_64
+yum -y install pylint.noarch
+yum -y install python2-certifi.noarch
+yum -y install tar
+
+pip2.7 install pymongo==3.1 -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+pip2.7 install requests==2.16.1 -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+ pip2.7 install MarkupSafe==0.23 -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+pip2.7 install -r buildscripts/requirements.txt -i http://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+
+
+//pip3.6 install --user typing pyyaml yum Cheetah3 
+//pip2.7 install --user typing pyyaml regex Cheetah 
+//pip2.7 install regex==2021.11.2
+
+
+wget https://ftp.tsukuba.wide.ad.jp/software/gcc/releases/gcc-5.4.0/gcc-5.4.0.tar.bz2
+构建gcc5.3.0以上版本
+
+tar jxvf gcc-5.4.0.tar.bz2
+cd gcc-5.4.0
+./configure --enable-checking=release --enable-languages=c,c++ --disable-multilib
+make
+make install
+
+wget ftp://gcc.gnu.org/pub/gcc/infrastructure/gmp-6.1.0.tar.bz2
+wget ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
+wget ftp://gcc.gnu.org/pub/gcc/infrastructure/mpc-1.0.3.tar.gz
+
+ tar jxvf gmp-6.1.0.tar.bz2
+ tar jxvf mpfr-3.1.4.tar.bz2
+ tar -zxvf mpc-1.0.3.tar.gz
+
+cd gmp-6.1.0
+./configure
+yum install m4
+
+cd mpfr-3.1.4
+./configure
+make && make install
+
+cd mpc-1.0.3
+./configure
+make && make install
+
+
+
+
+开始编译：
+
+python2.7 buildscripts/scons.py all  MONGO_VERSION=4.0.3
+
+
+编译完成后，尝试启动mongod，报错：
+[root@docker-desktop mongo-r4.0.3]# ./mongo --help
+./mongo: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.21' not found (required by ./mongo)
+./mongo: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.20' not found (required by ./mongo)
+./mongo: /lib64/libstdc++.so.6: version `CXXABI_1.3.8' not found (required by ./mongo)
+
+修复方法如下：
+https://www.cnblogs.com/muahao/p/9078611.html
+
+￼
+
+
+构建新版本主要思路：
+基于线上的镜像打补丁方式，镜像中主要包括mongod/mongos/mongo， jmiss-mongo-bakcup和mongosync
+以及mongodump、mongorestore、mongostat等tool
